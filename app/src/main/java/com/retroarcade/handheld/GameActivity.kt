@@ -121,6 +121,9 @@ class GameActivity : AppCompatActivity() {
             for (sub in arrayOf("cfg", "nvram", "hi", "memcard", "diff", "ctrlr", "inp", "snap")) {
                 File(savesDir, "mame2003-plus/$sub").mkdirs()
             }
+        } else {
+            File(systemDir, "fbneo").mkdirs()
+            File(savesDir, "fbneo").mkdirs()
         }
 
         val portraitNow = resources.configuration.orientation != Configuration.ORIENTATION_LANDSCAPE
@@ -209,7 +212,11 @@ class GameActivity : AppCompatActivity() {
             Variable("mame2003-plus_skip_disclaimer", "enabled"),
             Variable("mame2003-plus_skip_warnings", "enabled"),
         )
-        Core.FBNEO -> arrayOf()
+        // By default FBNeo opens the cabinet's service menu when START is held down,
+        // which is far too easy to do by accident on a touch screen.
+        Core.FBNEO -> arrayOf(
+            Variable("fbneo-diagnostic-input", "None"),
+        )
     }
 
     /** Positions on the panel map to the same RetroPad keys for both cores. */
