@@ -1,0 +1,74 @@
+plugins {
+    id "com.android.application"
+    id "org.jetbrains.kotlin.android"
+}
+
+// Release signing comes from the environment (GitHub Actions secrets). Without it the
+// build falls back to the debug key so the project still builds anywhere.
+def keystorePath = System.getenv("KEYSTORE_FILE")
+def hasKeystore = keystorePath != null && !keystorePath.isEmpty() && new File(keystorePath).exists()
+
+android {
+    namespace "com.retroarcade.handheld"
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "com.retroarcade.handheld"
+        minSdk 26
+        targetSdk 34
+        versionCode Integer.parseInt(System.getenv("VERSION_CODE") ?: "1")
+        versionName System.getenv("VERSION_NAME") ?: "1.0.0"
+
+        // The bundled arcade cores are fetched for 64-bit ARM only.
+        ndk {
+            abiFilters "arm64-v8a"
+        }
+    }
+
+    signingConfigs {
+        release {
+            if (hasKeystore) {
+                storeFile new File(keystorePath)
+                storePassword System.getenv("KEYSTORE_PASSWORD")
+                keyAlias System.getenv("KEY_ALIAS")
+                keyPassword System.getenv("KEYSTORE_PASSWORD")
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig hasKeystore ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = "17"
+    }
+
+    packaging {
+        jniLibs {
+            // Compress the cores inside the APK (they are extracted at install time):
+            // keeps the download small and gives the cores a real file path to load from.
+            useLegacyPackaging = true
+        }
+    }
+
+    lint {
+        checkReleaseBuilds false
+        abortOnError false
+    }
+}
+
+dependencies {
+    implementation "com.github.Swordfish90:LibretroDroid:0.14.0"
+    implementation "androidx.appcompat:appcompat:1.6.1"
+    implementation "androidx.lifecycle:lifecycle-runtime-ktx:2.6.2"
+    implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3"
+}

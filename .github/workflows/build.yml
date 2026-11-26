@@ -1,0 +1,82 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-apk
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    env:
+      VERSION_NAME: 1.0.${{ github.run_number }}
+      VERSION_CODE: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      # The arcade cores are not kept in this repository; the official libretro
+      # builds are fetched for every build and packed into the APK.
+      - name: Fetch emulator cores
+        run: |
+          set -euo pipefail
+          dest=app/src/main/jniLibs/arm64-v8a
+          mkdir -p "$dest" "$RUNNER_TEMP/cores"
+          for core in fbneo mame2003_plus; do
+            url="https://buildbot.libretro.com/nightly/android/latest/arm64-v8a/${core}_libretro_android.so.zip"
+            curl -fL --retry 5 --retry-delay 10 --retry-all-errors -o "$RUNNER_TEMP/cores/$core.zip" "$url"
+            unzip -o -q "$RUNNER_TEMP/cores/$core.zip" -d "$RUNNER_TEMP/cores"
+            mv "$RUNNER_TEMP/cores/${core}_libretro_android.so" "$dest/lib${core}_libretro_android.so"
+          done
+          ls -l "$dest"
+
+      - name: Prepare signing key
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            echo "KEYSTORE_FILE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+          else
+            echo "::warning::No signing key configured. This build is signed with a throwaway debug key and cannot be installed over an earlier build."
+          fi
+
+      - name: Build
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: retroarcade
+        run: ./gradlew --no-daemon assembleRelease
+
+      - name: Collect APK
+        run: |
+          cp app/build/outputs/apk/release/app-release.apk "RetroArcade-$VERSION_NAME.apk"
+          ls -l RetroArcade-*.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RetroArcade-apk
+          path: RetroArcade-*.apk
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v$VERSION_NAME" RetroArcade-*.apk \
+            --title "Retro Arcade $VERSION_NAME" \
+            --notes "Android 8.0+ / arm64. ROM and BIOS files are not included."

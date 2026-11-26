@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- console base -->
+    <path
+        android:fillColor="#FF10121E"
+        android:pathData="M31,64h46a5,5 0,0 1,5 5v6a5,5 0,0 1,-5 5h-46a5,5 0,0 1,-5 -5v-6a5,5 0,0 1,5 -5z" />
+    <!-- stick shaft -->
+    <path
+        android:fillColor="#FFD5DAE2"
+        android:pathData="M45,42h6v24h-6z" />
+    <!-- stick ball -->
+    <path
+        android:fillColor="#FFE53935"
+        android:pathData="M48,36m-11,0a11,11 0,1 0,22 0a11,11 0,1 0,-22 0" />
+    <path
+        android:fillColor="#66FFFFFF"
+        android:pathData="M44,32m-3,0a3,3 0,1 0,6 0a3,3 0,1 0,-6 0" />
+    <!-- buttons -->
+    <path
+        android:fillColor="#FFFFC107"
+        android:pathData="M64,58m-4.5,0a4.5,4.5 0,1 0,9 0a4.5,4.5 0,1 0,-9 0" />
+    <path
+        android:fillColor="#FF42A5F5"
+        android:pathData="M74,52m-4.5,0a4.5,4.5 0,1 0,9 0a4.5,4.5 0,1 0,-9 0" />
+</vector>

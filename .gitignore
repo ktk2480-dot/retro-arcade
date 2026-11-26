@@ -1,0 +1,11 @@
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+.DS_Store
+# Emulator cores are fetched at build time (see .github/workflows/build.yml)
+app/src/main/jniLibs/
+# Signing keys never belong in the repository
+*.jks
+*.keystore
