@@ -9,7 +9,8 @@ Binary layout (big-endian), read by GameDb.kt:
   "RADB" | u32 version | u32 coreCount
   per core:  str coreId | u32 gameCount
   per game:  str name | str title | str parent | str bios
-             u8 flags (1=vertical, 2=bios set, 4=preliminary driver) | u8 buttons (255=unknown) | u16 romCount
+             u8 flags (1=vertical, 2=bios set, 4=preliminary driver) | u8 buttons (255=unknown)
+             u8 stick (0=unknown, 1=8-way, 2=4-way, 3=analog) | u16 romCount
              romCount x (u32 crc, u32 size)
   str = u16 byteLength + UTF-8 bytes
 ROM lists hold only the game's own and parent ROMs; BIOS ROMs are left out and
@@ -21,6 +22,15 @@ import sys
 import xml.etree.ElementTree as ET
 
 FLAG_VERTICAL, FLAG_BIOS, FLAG_PRELIM = 1, 2, 4
+
+# MAME's "control" attribute -> the kind of stick the cabinet has.
+STICK_UNKNOWN, STICK_8WAY, STICK_4WAY, STICK_ANALOG = 0, 1, 2, 3
+STICK_TYPES = {
+    "joy8way": STICK_8WAY, "doublejoy8way": STICK_8WAY,
+    "joy4way": STICK_4WAY, "doublejoy4way": STICK_4WAY,
+    "stick": STICK_ANALOG, "paddle": STICK_ANALOG, "dial": STICK_ANALOG,
+    "trackball": STICK_ANALOG, "lightgun": STICK_ANALOG,
+}
 
 
 def parse(path, bios_attr):
@@ -49,6 +59,7 @@ def parse(path, bios_attr):
             "prelim": driver is not None and driver.get("status") == "preliminary",
             "is_bios": is_bios,
             "buttons": int(inp.get("buttons") or 0) if inp is not None else 0,
+            "stick": STICK_TYPES.get(inp.get("control") or "", STICK_UNKNOWN) if inp is not None else STICK_UNKNOWN,
         }
         el.clear()
     return games
@@ -97,20 +108,22 @@ def main():
     resolve(mame)
     resolve(fbneo)
 
-    # FBNeo's list carries no button counts: Neo Geo is always 4, otherwise borrow
-    # MAME's count for the same set (or its parent); 255 means "unknown".
+    # FBNeo's list carries no control details: borrow MAME's for the same set (or its
+    # parent). Neo Geo is always 4 buttons and an 8-way stick; 255 buttons = "unknown".
     for g in fbneo.values():
         if g["bios"] == "neogeo":
             g["buttons"] = 4
+            g["stick"] = STICK_8WAY
             continue
         g["buttons"] = 255
         for key in (g["name"], g["parent"]):
             if key and key in mame:
                 g["buttons"] = mame[key]["buttons"]
+                g["stick"] = mame[key]["stick"]
                 break
 
     out = bytearray(b"RADB")
-    out += struct.pack(">II", 1, 2)
+    out += struct.pack(">II", 2, 2)
     for core_id, games in (("fbneo", fbneo), ("mame2003_plus", mame)):
         put_str(out, core_id)
         out += struct.pack(">I", len(games))
@@ -122,7 +135,7 @@ def main():
             put_str(out, g["title"])
             put_str(out, g["parent"])
             put_str(out, g["bios"])
-            out += struct.pack(">BBH", flags, min(g["buttons"], 255), len(g["own"]))
+            out += struct.pack(">BBBH", flags, min(g["buttons"], 255), g["stick"], len(g["own"]))
             for crc, size in g["own"]:
                 out += struct.pack(">II", crc, size & 0xFFFFFFFF)
     with open(a.out, "wb") as f:

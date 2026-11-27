@@ -234,6 +234,7 @@ class MainActivity : AppCompatActivity() {
                     "· 게임 중 MENU(또는 뒤로가기): 상태 저장/불러오기, CRT 필터, 회전 고정.\n" +
                     "· 버튼: '버튼 배열'로 3·4·6버튼을 고르고, '버튼 지정'으로 화면 버튼이 누를 " +
                     "게임 버튼을 바꾸며, '버튼 위치 편집'으로 끌어서 옮깁니다.\n" +
+                    "· 조이스틱: 상하·좌우 2방향, 4방향, 8방향, 16방향(아날로그 게임용) 중에서 고릅니다.\n" +
                     "· 상태 저장은 FBNeo에서 안정적이며, MAME 2003-Plus는 게임에 따라 지원하지 않습니다." +
                     coreNote
             )
@@ -423,6 +424,7 @@ class MainActivity : AppCompatActivity() {
             .putExtra(GameActivity.EXTRA_TITLE, game?.title ?: item.title)
             .putExtra(GameActivity.EXTRA_VERTICAL, game?.isVertical ?: false)
             .putExtra(GameActivity.EXTRA_BUTTONS, game?.buttons ?: GameDb.BUTTONS_UNKNOWN)
+            .putExtra(GameActivity.EXTRA_STICK, game?.stick ?: GameDb.STICK_UNKNOWN)
         gameLauncher.launch(intent)
     }
 

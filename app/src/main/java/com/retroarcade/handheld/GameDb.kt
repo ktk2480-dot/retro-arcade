@@ -15,6 +15,8 @@ class DbGame(
     private val flags: Int,
     /** Number of action buttons, or [GameDb.BUTTONS_UNKNOWN]. */
     val buttons: Int,
+    /** The cabinet's stick: one of the GameDb.STICK_ values. */
+    val stick: Int,
     val crcs: IntArray,
     val sizes: IntArray,
 ) {
@@ -29,6 +31,11 @@ class GameDb private constructor(private val cores: Map<Core, Map<String, DbGame
 
     companion object {
         const val BUTTONS_UNKNOWN = 255
+
+        const val STICK_UNKNOWN = 0
+        const val STICK_8WAY = 1
+        const val STICK_4WAY = 2
+        const val STICK_ANALOG = 3
 
         @Volatile
         private var instance: GameDb? = null
@@ -51,7 +58,8 @@ class GameDb private constructor(private val cores: Map<Core, Map<String, DbGame
             if (String(magic, StandardCharsets.US_ASCII) != "RADB") {
                 throw IllegalStateException("gamedb.bin is not a game database")
             }
-            buf.getInt() // format version
+            val version = buf.getInt()
+            if (version != 2) throw IllegalStateException("unsupported game database version $version")
             val coreCount = buf.getInt()
             val result = HashMap<Core, Map<String, DbGame>>()
             for (c in 0 until coreCount) {
@@ -65,6 +73,7 @@ class GameDb private constructor(private val cores: Map<Core, Map<String, DbGame
                     val bios = readString(buf)
                     val flags = buf.get().toInt() and 0xFF
                     val buttons = buf.get().toInt() and 0xFF
+                    val stick = buf.get().toInt() and 0xFF
                     val romCount = buf.getShort().toInt() and 0xFFFF
                     val crcs = IntArray(romCount)
                     val sizes = IntArray(romCount)
@@ -72,7 +81,7 @@ class GameDb private constructor(private val cores: Map<Core, Map<String, DbGame
                         crcs[i] = buf.getInt()
                         sizes[i] = buf.getInt()
                     }
-                    games[name] = DbGame(name, title, parent, bios, flags, buttons, crcs, sizes)
+                    games[name] = DbGame(name, title, parent, bios, flags, buttons, stick, crcs, sizes)
                 }
                 if (core != null) result[core] = games
             }

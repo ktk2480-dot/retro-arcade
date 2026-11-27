@@ -10,9 +10,12 @@ import android.util.SparseIntArray
 import android.view.MotionEvent
 import android.view.View
 import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.math.atan2
+import kotlin.math.cos
 import kotlin.math.hypot
 import kotlin.math.roundToInt
+import kotlin.math.sin
 
 /**
  * The on-screen arcade panel: an 8-way stick, the action buttons and the
@@ -26,6 +29,9 @@ class GamepadView(context: Context) : View(context) {
     interface Listener {
         /** x and y are -1, 0 or 1. Up is y = -1. */
         fun onStick(x: Int, y: Int)
+
+        /** Sixteen-way mode only: the stick as an analog position, each axis -1..1. */
+        fun onAnalog(x: Float, y: Float)
         fun onButton(id: Int, pressed: Boolean)
         fun onMenu()
 
@@ -38,6 +44,22 @@ class GamepadView(context: Context) : View(context) {
 
     var editing = false
         private set
+
+    /** How the stick's position becomes directions: one of the MODE_ constants. */
+    var stickMode: Int = MODE_8WAY
+        set(value) {
+            if (field != value) {
+                releaseAll()
+                field = value
+                invalidate()
+            }
+        }
+
+    /**
+     * Sixteen-way mode sends an analog position. Games with ordinary direction
+     * switches ignore that, so they are sent the nearest of the eight directions too.
+     */
+    var digitalWithAnalog = true
 
     /** The default layout, and the same layout with the player's moves applied. */
     private var base: ConsoleGeometry? = null
@@ -58,6 +80,8 @@ class GamepadView(context: Context) : View(context) {
     private var stickY = 0
     private var knobDx = 0f
     private var knobDy = 0f
+    private var analogX = 0f
+    private var analogY = 0f
 
     /** Pointer id -> the control that finger is on (or ID_NONE). */
     private val pointerTargets = SparseIntArray()
@@ -102,6 +126,7 @@ class GamepadView(context: Context) : View(context) {
         knobDx = 0f
         knobDy = 0f
         setStick(0, 0)
+        setAnalog(0f, 0f)
         pointerTargets.clear()
         syncButtons()
         invalidate()
@@ -174,6 +199,7 @@ class GamepadView(context: Context) : View(context) {
             knobDx = 0f
             knobDy = 0f
             setStick(0, 0)
+            setAnalog(0f, 0f)
             return
         }
         val index = pointerTargets.indexOfKey(id)
@@ -214,8 +240,12 @@ class GamepadView(context: Context) : View(context) {
     }
 
     private fun updateStick(g: ConsoleGeometry, x: Float, y: Float) {
-        val dx = x - g.stickCx
-        val dy = y - g.stickCy
+        var dx = x - g.stickCx
+        var dy = y - g.stickCy
+        // A two-way stick only travels along its one axis.
+        if (stickMode == MODE_2WAY_HORIZONTAL) dy = 0f
+        if (stickMode == MODE_2WAY_VERTICAL) dx = 0f
+
         val distance = hypot(dx, dy)
         val travel = g.stickR * 0.5f
         if (distance > travel) {
@@ -227,10 +257,38 @@ class GamepadView(context: Context) : View(context) {
         }
         if (distance < g.stickR * 0.22f) {
             setStick(0, 0)
+            setAnalog(0f, 0f)
             return
         }
-        // Eight 45-degree sectors, 0 = right, counting clockwise on screen.
-        val sector = (atan2(dy.toDouble(), dx.toDouble()) / (PI / 4.0)).roundToInt()
+
+        when (stickMode) {
+            MODE_2WAY_HORIZONTAL -> setStick(if (dx > 0f) 1 else -1, 0)
+            MODE_2WAY_VERTICAL -> setStick(0, if (dy > 0f) 1 else -1)
+            MODE_4WAY -> {
+                val ax = abs(dx)
+                val ay = abs(dy)
+                // Lean towards the direction already held, so a thumb resting near a
+                // diagonal does not flicker between two directions.
+                val horizontal = when {
+                    stickX != 0 -> ax * 1.3f >= ay
+                    stickY != 0 -> ax > ay * 1.3f
+                    else -> ax >= ay
+                }
+                if (horizontal) setStick(if (dx > 0f) 1 else -1, 0) else setStick(0, if (dy > 0f) 1 else -1)
+            }
+            MODE_16WAY -> {
+                val angle = atan2(dy.toDouble(), dx.toDouble())
+                val snapped = (angle / (PI / 8.0)).roundToInt() * (PI / 8.0)
+                setAnalog(cos(snapped).toFloat(), sin(snapped).toFloat())
+                if (digitalWithAnalog) setEightWay(angle) else setStick(0, 0)
+            }
+            else -> setEightWay(atan2(dy.toDouble(), dx.toDouble()))
+        }
+    }
+
+    /** Eight 45-degree sectors, 0 = right, counting clockwise on screen. */
+    private fun setEightWay(angle: Double) {
+        val sector = (angle / (PI / 4.0)).roundToInt()
         val sx = when (sector) {
             -1, 0, 1 -> 1
             -4, -3, 3, 4 -> -1
@@ -249,6 +307,13 @@ class GamepadView(context: Context) : View(context) {
         stickX = x
         stickY = y
         listener?.onStick(x, y)
+    }
+
+    private fun setAnalog(x: Float, y: Float) {
+        if (x == analogX && y == analogY) return
+        analogX = x
+        analogY = y
+        listener?.onAnalog(x, y)
     }
 
     private fun syncButtons() {
@@ -355,8 +420,29 @@ class GamepadView(context: Context) : View(context) {
         stroke.color = 0xFF3A3A48.toInt()
         stroke.strokeWidth = r * 0.05f
         canvas.drawCircle(g.stickCx, g.stickCy, r, stroke)
+        // The gate shows which way the stick can go.
         fill.color = 0xFF1A1A23.toInt()
-        canvas.drawCircle(g.stickCx, g.stickCy, r * 0.62f, fill)
+        when (stickMode) {
+            MODE_2WAY_HORIZONTAL -> drawSlot(canvas, g, true)
+            MODE_2WAY_VERTICAL -> drawSlot(canvas, g, false)
+            MODE_4WAY -> {
+                drawSlot(canvas, g, true)
+                drawSlot(canvas, g, false)
+            }
+            else -> canvas.drawCircle(g.stickCx, g.stickCy, r * 0.62f, fill)
+        }
+        if (stickMode == MODE_16WAY) {
+            fill.color = 0xFF6A6A7A.toInt()
+            for (i in 0 until 16) {
+                val a = i * (PI / 8.0)
+                canvas.drawCircle(
+                    g.stickCx + (cos(a) * r * 0.8).toFloat(),
+                    g.stickCy + (sin(a) * r * 0.8).toFloat(),
+                    r * 0.03f,
+                    fill,
+                )
+            }
+        }
 
         val kx = g.stickCx + knobDx
         val ky = g.stickCy + knobDy
@@ -366,6 +452,17 @@ class GamepadView(context: Context) : View(context) {
         canvas.drawCircle(kx, ky, r * 0.42f, fill)
         fill.color = 0x55FFFFFF
         canvas.drawCircle(kx - r * 0.13f, ky - r * 0.15f, r * 0.12f, fill)
+    }
+
+    private fun drawSlot(canvas: Canvas, g: ConsoleGeometry, horizontal: Boolean) {
+        val along = g.stickR * 0.8f
+        val across = g.stickR * 0.3f
+        if (horizontal) {
+            hitRect.set(g.stickCx - along, g.stickCy - across, g.stickCx + along, g.stickCy + across)
+        } else {
+            hitRect.set(g.stickCx - across, g.stickCy - along, g.stickCx + across, g.stickCy + along)
+        }
+        canvas.drawRoundRect(hitRect, across, across, fill)
     }
 
     private fun drawButton(canvas: Canvas, b: PadButton, down: Boolean) {
@@ -436,9 +533,15 @@ class GamepadView(context: Context) : View(context) {
         canvas.drawRoundRect(outline, radius, radius, stroke)
     }
 
-    private companion object {
-        const val EDIT_NOTHING = 0
-        const val EDIT_RESET = 1
-        const val EDIT_DONE = 2
+    companion object {
+        const val MODE_8WAY = 0
+        const val MODE_4WAY = 1
+        const val MODE_2WAY_HORIZONTAL = 2
+        const val MODE_2WAY_VERTICAL = 3
+        const val MODE_16WAY = 4
+
+        private const val EDIT_NOTHING = 0
+        private const val EDIT_RESET = 1
+        private const val EDIT_DONE = 2
     }
 }

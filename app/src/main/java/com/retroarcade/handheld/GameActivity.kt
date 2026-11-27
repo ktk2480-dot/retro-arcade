@@ -43,6 +43,7 @@ class GameActivity : AppCompatActivity() {
         const val EXTRA_TITLE = "title"
         const val EXTRA_VERTICAL = "vertical"
         const val EXTRA_BUTTONS = "buttons"
+        const val EXTRA_STICK = "stick"
 
         /** The game could not be loaded; the reason was already shown here. */
         const val RESULT_LOAD_FAILED = Activity.RESULT_FIRST_USER
@@ -53,9 +54,18 @@ class GameActivity : AppCompatActivity() {
         private const val PREFS = "game_prefs"
         private const val PREF_CRT = "crt_filter"
         private const val PREF_BUTTON_MODE_PREFIX = "buttons_"
+        private const val PREF_STICK_MODE_PREFIX = "stick_"
         private const val PREF_ROTATION = "rotation"
 
         private const val BUTTONS_AUTO = 0
+
+        // Saved joystick choice: 0 = automatic, then the entries of the chooser in order.
+        private const val STICK_AUTO = 0
+        private const val STICK_UP_DOWN = 1
+        private const val STICK_LEFT_RIGHT = 2
+        private const val STICK_FOUR = 3
+        private const val STICK_EIGHT = 4
+        private const val STICK_SIXTEEN = 5
         private const val ROTATION_AUTO = 0
         private const val ROTATION_PORTRAIT = 1
         private const val ROTATION_LANDSCAPE = 2
@@ -98,6 +108,7 @@ class GameActivity : AppCompatActivity() {
 
     private var gameTitle = ""
     private var gameButtons = GameDb.BUTTONS_UNKNOWN
+    private var gameStick = GameDb.STICK_UNKNOWN
     private var crtEnabled = true
     private var loaded = false
     private var closing = false
@@ -119,6 +130,7 @@ class GameActivity : AppCompatActivity() {
         romFile = File(path)
         gameTitle = intent.getStringExtra(EXTRA_TITLE) ?: romFile.name
         gameButtons = intent.getIntExtra(EXTRA_BUTTONS, GameDb.BUTTONS_UNKNOWN)
+        gameStick = intent.getIntExtra(EXTRA_STICK, GameDb.STICK_UNKNOWN)
         val verticalGame = intent.getBooleanExtra(EXTRA_VERTICAL, false)
 
         prefs = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -168,6 +180,7 @@ class GameActivity : AppCompatActivity() {
         console = ConsoleLayout(this, retroView, verticalGame, padStore)
         console.buttonCount = effectiveButtonCount()
         keyMap = padStore.loadKeyMap(gameKey(), console.buttonCount)
+        applyStickMode()
         console.onArrangementChanged = { landscape ->
             // Upright, the picture hugs the top of its area; sideways it is centred.
             val alignment = if (landscape) ViewportAlignment.CENTER else ViewportAlignment.TOP
@@ -181,6 +194,10 @@ class GameActivity : AppCompatActivity() {
         console.gamepad.listener = object : GamepadView.Listener {
             override fun onStick(x: Int, y: Int) {
                 retroView.sendMotionEvent(GLRetroView.MOTION_SOURCE_DPAD, x.toFloat(), y.toFloat(), 0)
+            }
+
+            override fun onAnalog(x: Float, y: Float) {
+                retroView.sendMotionEvent(GLRetroView.MOTION_SOURCE_ANALOG_LEFT, x, y, 0)
             }
 
             override fun onButton(id: Int, pressed: Boolean) {
@@ -341,6 +358,7 @@ class GameActivity : AppCompatActivity() {
             "상태 저장",
             "상태 불러오기",
             "CRT 스캔라인 필터: " + (if (crtEnabled) "켜짐" else "꺼짐"),
+            "조이스틱: " + stickModeLabel(),
             "버튼 배열: " + buttonModeLabel(),
             "버튼 지정 (이 게임)",
             "버튼 위치 편집",
@@ -355,12 +373,13 @@ class GameActivity : AppCompatActivity() {
                     1 -> chooseSlot(true)
                     2 -> chooseSlot(false)
                     3 -> toggleCrt()
-                    4 -> chooseButtonMode()
-                    5 -> chooseRemapSlot()
-                    6 -> console.gamepad.startEditing()
-                    7 -> cycleRotation()
-                    8 -> resetGame()
-                    9 -> closeGame(Activity.RESULT_OK, null)
+                    4 -> chooseStickMode()
+                    5 -> chooseButtonMode()
+                    6 -> chooseRemapSlot()
+                    7 -> console.gamepad.startEditing()
+                    8 -> cycleRotation()
+                    9 -> resetGame()
+                    10 -> closeGame(Activity.RESULT_OK, null)
                     else -> Unit
                 }
             }
@@ -423,6 +442,67 @@ class GameActivity : AppCompatActivity() {
     }
 
     // ---- button layout and rotation ---------------------------------------------------------
+
+    // ---- joystick ---------------------------------------------------------------------------
+
+    private fun stickChoice(): Int = prefs.getInt(PREF_STICK_MODE_PREFIX + gameKey(), STICK_AUTO)
+
+    /** Automatic follows the cabinet: four-way games get a four-way stick, the rest eight-way. */
+    private fun autoStickChoice(): Int =
+        if (gameStick == GameDb.STICK_4WAY) STICK_FOUR else STICK_EIGHT
+
+    private fun stickName(choice: Int): String = when (choice) {
+        STICK_UP_DOWN -> "상하 2방향"
+        STICK_LEFT_RIGHT -> "좌우 2방향"
+        STICK_FOUR -> "4방향"
+        STICK_SIXTEEN -> "16방향"
+        else -> "8방향"
+    }
+
+    private fun stickModeLabel(): String {
+        val choice = stickChoice()
+        return if (choice == STICK_AUTO) "자동 (" + stickName(autoStickChoice()) + ")" else stickName(choice)
+    }
+
+    private fun applyStickMode() {
+        val choice = stickChoice().let { if (it == STICK_AUTO) autoStickChoice() else it }
+        console.gamepad.stickMode = when (choice) {
+            STICK_UP_DOWN -> GamepadView.MODE_2WAY_VERTICAL
+            STICK_LEFT_RIGHT -> GamepadView.MODE_2WAY_HORIZONTAL
+            STICK_FOUR -> GamepadView.MODE_4WAY
+            STICK_SIXTEEN -> GamepadView.MODE_16WAY
+            else -> GamepadView.MODE_8WAY
+        }
+        // Games built around an analog stick get the analog signal alone.
+        console.gamepad.digitalWithAnalog = gameStick != GameDb.STICK_ANALOG
+    }
+
+    private fun chooseStickMode() {
+        val choices = intArrayOf(STICK_AUTO, STICK_UP_DOWN, STICK_LEFT_RIGHT, STICK_FOUR, STICK_EIGHT, STICK_SIXTEEN)
+        val labels = arrayOf(
+            "자동 (이 게임: " + stickName(autoStickChoice()) + ")",
+            "상하 2방향",
+            "좌우 2방향",
+            "4방향",
+            "8방향",
+            "16방향 (아날로그 스틱 게임용)",
+        )
+        val builder = AlertDialog.Builder(this)
+            .setTitle("조이스틱 (이 게임)")
+            .setSingleChoiceItems(labels, choices.indexOf(stickChoice()).coerceAtLeast(0)) { dialog, which ->
+                prefs.edit().putInt(PREF_STICK_MODE_PREFIX + gameKey(), choices[which]).apply()
+                applyStickMode()
+                val digitalCabinet = gameStick == GameDb.STICK_8WAY || gameStick == GameDb.STICK_4WAY
+                if (choices[which] == STICK_SIXTEEN && digitalCabinet) {
+                    toast("이 게임은 방향 스위치 4개만 읽어서 8방향까지만 구분됩니다.")
+                }
+                dialog.dismiss()
+            }
+            .setNegativeButton("취소", null)
+        showPaused(builder)
+    }
+
+    // ---- button arrangement -----------------------------------------------------------------
 
     /** The arrangement is remembered per game: 0 = automatic, else 3, 4 or 6. */
     private fun buttonMode(): Int = prefs.getInt(PREF_BUTTON_MODE_PREFIX + gameKey(), BUTTONS_AUTO)
