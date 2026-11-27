@@ -52,7 +52,7 @@ class GameActivity : AppCompatActivity() {
 
         private const val PREFS = "game_prefs"
         private const val PREF_CRT = "crt_filter"
-        private const val PREF_BUTTON_MODE = "button_mode"
+        private const val PREF_BUTTON_MODE_PREFIX = "buttons_"
         private const val PREF_ROTATION = "rotation"
 
         private const val BUTTONS_AUTO = 0
@@ -65,6 +65,25 @@ class GameActivity : AppCompatActivity() {
         // MAME 2003-Plus controller types: RETRO_DEVICE_JOYPAD and its "6-Button" subclass.
         private const val MAME_PAD_CLASSIC = 1
         private const val MAME_PAD_6BUTTON = (3 shl 8) or 1
+
+        // The game's buttons 1-6 in the order both cores hand them out, as RetroPad keys.
+        private val GAME_BUTTON_KEYS = intArrayOf(
+            KeyEvent.KEYCODE_BUTTON_B,
+            KeyEvent.KEYCODE_BUTTON_A,
+            KeyEvent.KEYCODE_BUTTON_Y,
+            KeyEvent.KEYCODE_BUTTON_X,
+            KeyEvent.KEYCODE_BUTTON_L1,
+            KeyEvent.KEYCODE_BUTTON_R1,
+        )
+
+        // Which game button (index above) each on-screen slot presses by default.
+        // One row and two-by-two simply count up: A B C (D) = buttons 1 2 3 (4).
+        private val DEFAULT_SLOTS_3 = intArrayOf(0, 1, 2)
+        private val DEFAULT_SLOTS_4 = intArrayOf(0, 1, 2, 3)
+
+        // Six buttons keep the fighting-game panel both cores expect:
+        // bottom row A B C = B, A, R and top row X Y Z = Y, X, L.
+        private val DEFAULT_SLOTS_6 = intArrayOf(0, 1, 5, 2, 3, 4)
     }
 
     private lateinit var retroView: GLRetroView
@@ -72,6 +91,10 @@ class GameActivity : AppCompatActivity() {
     private lateinit var core: Core
     private lateinit var romFile: File
     private lateinit var prefs: SharedPreferences
+    private lateinit var padStore: PadStore
+
+    /** The player's own button assignment for this game (slot -> game button, -1 = default). */
+    private var keyMap = IntArray(PadStore.SLOTS) { -1 }
 
     private var gameTitle = ""
     private var gameButtons = GameDb.BUTTONS_UNKNOWN
@@ -99,6 +122,7 @@ class GameActivity : AppCompatActivity() {
         val verticalGame = intent.getBooleanExtra(EXTRA_VERTICAL, false)
 
         prefs = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        padStore = PadStore(prefs)
         crtEnabled = prefs.getBoolean(PREF_CRT, true)
 
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
@@ -141,8 +165,9 @@ class GameActivity : AppCompatActivity() {
         retroView = GLRetroView(this, data)
         lifecycle.addObserver(retroView)
 
-        console = ConsoleLayout(this, retroView, verticalGame)
-        console.sixButtons = effectiveSixButtons()
+        console = ConsoleLayout(this, retroView, verticalGame, padStore)
+        console.buttonCount = effectiveButtonCount()
+        keyMap = padStore.loadKeyMap(gameKey(), console.buttonCount)
         console.onArrangementChanged = { landscape ->
             // Upright, the picture hugs the top of its area; sideways it is centred.
             val alignment = if (landscape) ViewportAlignment.CENTER else ViewportAlignment.TOP
@@ -169,6 +194,11 @@ class GameActivity : AppCompatActivity() {
             override fun onMenu() {
                 openMenu()
             }
+
+            override fun onEditFinished() {
+                setEmulationPaused(false)
+                hideSystemBars()
+            }
         }
         setContentView(console)
         hideSystemBars()
@@ -183,7 +213,12 @@ class GameActivity : AppCompatActivity() {
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                openMenu()
+                if (console.gamepad.editing) {
+                    console.gamepad.stopEditing()
+                    setEmulationPaused(false)
+                } else {
+                    openMenu()
+                }
             }
         })
     }
@@ -219,17 +254,28 @@ class GameActivity : AppCompatActivity() {
         )
     }
 
-    /** Positions on the panel map to the same RetroPad keys for both cores. */
+    private fun gameKey(): String = core.id + "_" + romFile.nameWithoutExtension
+
+    private fun defaultSlots(): IntArray = when (console.buttonCount) {
+        3 -> DEFAULT_SLOTS_3
+        4 -> DEFAULT_SLOTS_4
+        else -> DEFAULT_SLOTS_6
+    }
+
+    /** Index of the game button an on-screen slot presses: the player's choice, else the default. */
+    private fun gameButtonFor(slot: Int): Int {
+        val chosen = keyMap.getOrElse(slot) { -1 }
+        if (chosen >= 0 && chosen < GAME_BUTTON_KEYS.size) return chosen
+        return defaultSlots().getOrElse(slot) { -1 }
+    }
+
     private fun keyCodeFor(id: Int): Int = when (id) {
-        ConsoleGeometry.ID_B1 -> KeyEvent.KEYCODE_BUTTON_B
-        ConsoleGeometry.ID_B2 -> KeyEvent.KEYCODE_BUTTON_A
-        ConsoleGeometry.ID_B3 -> KeyEvent.KEYCODE_BUTTON_R1
-        ConsoleGeometry.ID_T1 -> KeyEvent.KEYCODE_BUTTON_Y
-        ConsoleGeometry.ID_T2 -> KeyEvent.KEYCODE_BUTTON_X
-        ConsoleGeometry.ID_T3 -> KeyEvent.KEYCODE_BUTTON_L1
         ConsoleGeometry.ID_COIN -> KeyEvent.KEYCODE_BUTTON_SELECT
         ConsoleGeometry.ID_START -> KeyEvent.KEYCODE_BUTTON_START
-        else -> KeyEvent.KEYCODE_UNKNOWN
+        else -> {
+            val index = gameButtonFor(id)
+            if (index >= 0) GAME_BUTTON_KEYS[index] else KeyEvent.KEYCODE_UNKNOWN
+        }
     }
 
     private fun onFirstFrame() {
@@ -288,7 +334,7 @@ class GameActivity : AppCompatActivity() {
     // ---- menu -------------------------------------------------------------------------------
 
     private fun openMenu() {
-        if (closing || failureShown || openDialogs > 0) return
+        if (closing || failureShown || openDialogs > 0 || console.gamepad.editing) return
         console.gamepad.releaseAll()
         val items = arrayOf(
             "계속하기",
@@ -296,6 +342,8 @@ class GameActivity : AppCompatActivity() {
             "상태 불러오기",
             "CRT 스캔라인 필터: " + (if (crtEnabled) "켜짐" else "꺼짐"),
             "버튼 배열: " + buttonModeLabel(),
+            "버튼 지정 (이 게임)",
+            "버튼 위치 편집",
             "화면 회전: " + rotationLabel(),
             "게임 리셋",
             "게임 종료",
@@ -307,10 +355,12 @@ class GameActivity : AppCompatActivity() {
                     1 -> chooseSlot(true)
                     2 -> chooseSlot(false)
                     3 -> toggleCrt()
-                    4 -> cycleButtonMode()
-                    5 -> cycleRotation()
-                    6 -> resetGame()
-                    7 -> closeGame(Activity.RESULT_OK, null)
+                    4 -> chooseButtonMode()
+                    5 -> chooseRemapSlot()
+                    6 -> console.gamepad.startEditing()
+                    7 -> cycleRotation()
+                    8 -> resetGame()
+                    9 -> closeGame(Activity.RESULT_OK, null)
                     else -> Unit
                 }
             }
@@ -326,7 +376,8 @@ class GameActivity : AppCompatActivity() {
             if (openDialogs <= 0) {
                 openDialogs = 0
                 if (!closing) {
-                    setEmulationPaused(false)
+                    // The layout editor keeps the game held until "done".
+                    if (!console.gamepad.editing) setEmulationPaused(false)
                     hideSystemBars()
                 }
             }
@@ -373,27 +424,89 @@ class GameActivity : AppCompatActivity() {
 
     // ---- button layout and rotation ---------------------------------------------------------
 
-    private fun effectiveSixButtons(): Boolean = when (prefs.getInt(PREF_BUTTON_MODE, BUTTONS_AUTO)) {
-        4 -> false
-        6 -> true
-        else -> gameButtons == GameDb.BUTTONS_UNKNOWN || gameButtons >= 5
+    /** The arrangement is remembered per game: 0 = automatic, else 3, 4 or 6. */
+    private fun buttonMode(): Int = prefs.getInt(PREF_BUTTON_MODE_PREFIX + gameKey(), BUTTONS_AUTO)
+
+    private fun autoButtonCount(): Int = when {
+        gameButtons == GameDb.BUTTONS_UNKNOWN || gameButtons >= 5 -> 6
+        gameButtons == 4 -> 4
+        else -> 3
     }
 
-    private fun buttonModeLabel(): String = when (prefs.getInt(PREF_BUTTON_MODE, BUTTONS_AUTO)) {
+    private fun effectiveButtonCount(): Int = when (buttonMode()) {
+        3 -> 3
+        4 -> 4
+        6 -> 6
+        else -> autoButtonCount()
+    }
+
+    private fun buttonModeLabel(): String = when (buttonMode()) {
+        3 -> "3버튼"
         4 -> "4버튼"
         6 -> "6버튼"
-        else -> "자동 (" + (if (effectiveSixButtons()) "6버튼" else "4버튼") + ")"
+        else -> "자동 (${autoButtonCount()}버튼)"
     }
 
-    private fun cycleButtonMode() {
-        val next = when (prefs.getInt(PREF_BUTTON_MODE, BUTTONS_AUTO)) {
-            BUTTONS_AUTO -> 4
-            4 -> 6
-            else -> BUTTONS_AUTO
+    private fun chooseButtonMode() {
+        val modes = intArrayOf(BUTTONS_AUTO, 3, 4, 6)
+        val labels = arrayOf(
+            "자동 (이 게임: ${autoButtonCount()}버튼)",
+            "3버튼 · 한 줄  A B C",
+            "4버튼 · 두 줄  C D / A B",
+            "6버튼 · 두 줄  X Y Z / A B C",
+        )
+        val builder = AlertDialog.Builder(this)
+            .setTitle("버튼 배열 (이 게임)")
+            .setItems(labels) { _, which ->
+                prefs.edit().putInt(PREF_BUTTON_MODE_PREFIX + gameKey(), modes[which]).apply()
+                console.gamepad.releaseAll()
+                console.buttonCount = effectiveButtonCount()
+                keyMap = padStore.loadKeyMap(gameKey(), console.buttonCount)
+            }
+            .setNegativeButton("취소", null)
+        showPaused(builder)
+    }
+
+    private fun slotNames(count: Int): Array<String> = when (count) {
+        3 -> arrayOf("A", "B", "C")
+        4 -> arrayOf("A", "B", "C", "D")
+        else -> arrayOf("A", "B", "C", "X", "Y", "Z")
+    }
+
+    /** Lets the player choose which game button each on-screen button presses, for this game only. */
+    private fun chooseRemapSlot() {
+        val count = console.buttonCount
+        val names = slotNames(count)
+        val labels = Array(names.size) { slot ->
+            "화면 ${names[slot]}  →  게임 버튼 ${gameButtonFor(slot) + 1}"
         }
-        prefs.edit().putInt(PREF_BUTTON_MODE, next).apply()
-        console.sixButtons = effectiveSixButtons()
-        toast("버튼 배열: " + buttonModeLabel())
+        val builder = AlertDialog.Builder(this)
+            .setTitle("버튼 지정 (이 게임)")
+            .setItems(labels) { _, slot -> chooseGameButton(slot, names[slot]) }
+            .setNeutralButton("기본값으로") { _, _ ->
+                padStore.clearKeyMap(gameKey(), count)
+                keyMap = padStore.loadKeyMap(gameKey(), count)
+                toast("버튼 지정을 기본값으로 되돌렸습니다.")
+            }
+            .setPositiveButton("닫기", null)
+        showPaused(builder)
+    }
+
+    private fun chooseGameButton(slot: Int, name: String) {
+        val count = console.buttonCount
+        val labels = Array(GAME_BUTTON_KEYS.size) { index -> "게임 버튼 ${index + 1}" }
+        val builder = AlertDialog.Builder(this)
+            .setTitle("화면 $name 버튼이 누를 게임 버튼")
+            .setSingleChoiceItems(labels, gameButtonFor(slot)) { dialog, which ->
+                if (slot >= 0 && slot < keyMap.size) {
+                    keyMap[slot] = which
+                    padStore.saveKeyMap(gameKey(), count, keyMap)
+                }
+                dialog.dismiss()
+                chooseRemapSlot()
+            }
+            .setNegativeButton("취소") { _, _ -> chooseRemapSlot() }
+        showPaused(builder)
     }
 
     private fun rotationLabel(): String = when (prefs.getInt(PREF_ROTATION, ROTATION_AUTO)) {

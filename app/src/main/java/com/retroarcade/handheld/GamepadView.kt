@@ -3,6 +3,7 @@ package com.retroarcade.handheld
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.PointF
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.util.SparseIntArray
@@ -17,6 +18,8 @@ import kotlin.math.roundToInt
  * The on-screen arcade panel: an 8-way stick, the action buttons and the
  * coin / start / menu keys. It covers the whole screen so that one view sees
  * every finger, and draws nothing over the game picture itself.
+ *
+ * In layout-editing mode the controls stop playing and can be dragged around.
  */
 class GamepadView(context: Context) : View(context) {
 
@@ -25,11 +28,22 @@ class GamepadView(context: Context) : View(context) {
         fun onStick(x: Int, y: Int)
         fun onButton(id: Int, pressed: Boolean)
         fun onMenu()
+
+        /** The player pressed "done" in the layout editor. */
+        fun onEditFinished()
     }
 
     var listener: Listener? = null
+    var store: PadStore? = null
 
+    var editing = false
+        private set
+
+    /** The default layout, and the same layout with the player's moves applied. */
+    private var base: ConsoleGeometry? = null
     private var geo: ConsoleGeometry? = null
+    private var profileKey = ""
+    private var offsets = HashMap<Int, PointF>()
 
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
@@ -50,9 +64,35 @@ class GamepadView(context: Context) : View(context) {
     private val pressed = BooleanArray(ConsoleGeometry.ID_COUNT)
     private val scratch = BooleanArray(ConsoleGeometry.ID_COUNT)
 
-    fun setGeometry(geometry: ConsoleGeometry) {
-        if (geo === geometry) return
-        geo = geometry
+    // Layout editor state.
+    private val editDone = RectF()
+    private val editReset = RectF()
+    private var editPressed = EDIT_NOTHING
+    private var dragId = ConsoleGeometry.ID_NONE
+    private var dragLastX = 0f
+    private var dragLastY = 0f
+    private val pointA = PointF()
+    private val pointB = PointF()
+
+    fun setGeometry(geometry: ConsoleGeometry, key: String) {
+        if (base === geometry && profileKey == key) return
+        base = geometry
+        profileKey = key
+        offsets = store?.loadOffsets(key) ?: HashMap()
+        geo = geometry.moved(offsets)
+
+        // "Reset" and "done" sit in the middle of the picture while editing.
+        val u = geometry.unit
+        val pillH = u * 0.1f
+        val pillW = u * 0.3f
+        val gap = u * 0.04f
+        val cx = geometry.game.exactCenterX()
+        val cy = geometry.game.exactCenterY() + pillH
+        editReset.set(cx - gap / 2f - pillW, cy - pillH / 2f, cx - gap / 2f, cy + pillH / 2f)
+        editDone.set(cx + gap / 2f, cy - pillH / 2f, cx + gap / 2f + pillW, cy + pillH / 2f)
+
+        dragId = ConsoleGeometry.ID_NONE
+        editPressed = EDIT_NOTHING
         releaseAll()
     }
 
@@ -67,7 +107,23 @@ class GamepadView(context: Context) : View(context) {
         invalidate()
     }
 
+    fun startEditing() {
+        releaseAll()
+        dragId = ConsoleGeometry.ID_NONE
+        editPressed = EDIT_NOTHING
+        editing = true
+        invalidate()
+    }
+
+    fun stopEditing() {
+        editing = false
+        dragId = ConsoleGeometry.ID_NONE
+        editPressed = EDIT_NOTHING
+        invalidate()
+    }
+
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (editing) return onEditTouch(event)
         val g = geo ?: return true
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> {
@@ -130,14 +186,15 @@ class GamepadView(context: Context) : View(context) {
     }
 
     private fun hitSystem(g: ConsoleGeometry, x: Float, y: Float): Int {
-        if (inflated(g.coin).contains(x, y)) return ConsoleGeometry.ID_COIN
-        if (inflated(g.start).contains(x, y)) return ConsoleGeometry.ID_START
-        if (inflated(g.menu).contains(x, y)) return ConsoleGeometry.ID_MENU
+        if (inflated(g.coin, 0.35f).contains(x, y)) return ConsoleGeometry.ID_COIN
+        if (inflated(g.start, 0.35f).contains(x, y)) return ConsoleGeometry.ID_START
+        if (inflated(g.menu, 0.35f).contains(x, y)) return ConsoleGeometry.ID_MENU
         return ConsoleGeometry.ID_NONE
     }
 
-    private fun inflated(rect: RectF): RectF {
-        val pad = rect.height() * 0.35f
+    /** [rect] grown on every side by [factor] of its height. Returns a shared scratch rectangle. */
+    private fun inflated(rect: RectF, factor: Float): RectF {
+        val pad = rect.height() * factor
         hitRect.set(rect.left - pad, rect.top - pad, rect.right + pad, rect.bottom + pad)
         return hitRect
     }
@@ -207,6 +264,79 @@ class GamepadView(context: Context) : View(context) {
         }
     }
 
+    // ---- layout editor ----------------------------------------------------------------------
+
+    private fun onEditTouch(event: MotionEvent): Boolean {
+        val b = base ?: return true
+        val g = geo ?: return true
+        val x = event.x
+        val y = event.y
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                editPressed = when {
+                    editDone.contains(x, y) -> EDIT_DONE
+                    editReset.contains(x, y) -> EDIT_RESET
+                    else -> EDIT_NOTHING
+                }
+                dragId = if (editPressed == EDIT_NOTHING) hitMovable(g, x, y) else ConsoleGeometry.ID_NONE
+                dragLastX = x
+                dragLastY = y
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (dragId != ConsoleGeometry.ID_NONE) {
+                    dragBy(b, g, dragId, x - dragLastX, y - dragLastY)
+                    dragLastX = x
+                    dragLastY = y
+                }
+            }
+            MotionEvent.ACTION_UP -> {
+                if (dragId != ConsoleGeometry.ID_NONE) {
+                    store?.saveOffsets(profileKey, offsets)
+                } else if (editPressed == EDIT_RESET && editReset.contains(x, y)) {
+                    offsets.clear()
+                    store?.clearOffsets(profileKey)
+                    geo = b
+                } else if (editPressed == EDIT_DONE && editDone.contains(x, y)) {
+                    stopEditing()
+                    listener?.onEditFinished()
+                }
+                dragId = ConsoleGeometry.ID_NONE
+                editPressed = EDIT_NOTHING
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                dragId = ConsoleGeometry.ID_NONE
+                editPressed = EDIT_NOTHING
+            }
+        }
+        invalidate()
+        return true
+    }
+
+    private fun hitMovable(g: ConsoleGeometry, x: Float, y: Float): Int {
+        val system = hitSystem(g, x, y)
+        if (system != ConsoleGeometry.ID_NONE) return system
+        val action = hitAction(g, x, y)
+        if (action != ConsoleGeometry.ID_NONE) return action
+        if (hypot(x - g.stickCx, y - g.stickCy) <= g.stickR) return ConsoleGeometry.ID_STICK
+        return ConsoleGeometry.ID_NONE
+    }
+
+    private fun dragBy(b: ConsoleGeometry, g: ConsoleGeometry, id: Int, dx: Float, dy: Float) {
+        if (!g.center(id, pointA) || !b.center(id, pointB)) return
+        val u = b.unit
+        val offset = offsets.getOrPut(id) { PointF() }
+        offset.set((pointA.x + dx - pointB.x) / u, (pointA.y + dy - pointB.y) / u)
+        val moved = b.moved(offsets)
+        // Keep what was actually reached, so a control held against an edge comes
+        // straight back when the finger turns round.
+        if (moved.center(id, pointA)) {
+            offset.set((pointA.x - pointB.x) / u, (pointA.y - pointB.y) / u)
+        }
+        geo = moved
+    }
+
+    // ---- drawing ----------------------------------------------------------------------------
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val g = geo ?: return
@@ -215,6 +345,7 @@ class GamepadView(context: Context) : View(context) {
         drawPill(canvas, g.coin, "COIN", 0xFFFFC107.toInt(), 0xFF2B2100.toInt(), pressed[ConsoleGeometry.ID_COIN])
         drawPill(canvas, g.start, "START", 0xFFECEFF1.toInt(), 0xFF1A1D21.toInt(), pressed[ConsoleGeometry.ID_START])
         drawPill(canvas, g.menu, "MENU", 0xFF3A3A48.toInt(), 0xFFD5DAE2.toInt(), pressed[ConsoleGeometry.ID_MENU])
+        if (editing) drawEditor(canvas, g)
     }
 
     private fun drawStick(canvas: Canvas, g: ConsoleGeometry) {
@@ -266,5 +397,48 @@ class GamepadView(context: Context) : View(context) {
         text.color = labelColor
         text.textSize = rect.height() * 0.42f
         canvas.drawText(label, rect.centerX(), rect.centerY() - (text.descent() + text.ascent()) / 2f, text)
+    }
+
+    private fun drawEditor(canvas: Canvas, g: ConsoleGeometry) {
+        val u = g.unit
+
+        // Dim the picture and say what to do.
+        fill.color = 0xB3000000.toInt()
+        canvas.drawRect(g.game, fill)
+        text.color = 0xFFFFFFFF.toInt()
+        text.textSize = u * 0.045f
+        canvas.drawText("버튼을 끌어서 옮기세요", editDone.left - u * 0.02f, editDone.top - u * 0.11f, text)
+        text.color = 0xFFB8BCC6.toInt()
+        text.textSize = u * 0.032f
+        canvas.drawText("세로·가로 배치는 따로 저장됩니다", editDone.left - u * 0.02f, editDone.top - u * 0.045f, text)
+        drawPill(canvas, editReset, "초기화", 0xFF3A3A48.toInt(), 0xFFD5DAE2.toInt(), editPressed == EDIT_RESET)
+        drawPill(canvas, editDone, "완료", 0xFFFFC107.toInt(), 0xFF2B2100.toInt(), editPressed == EDIT_DONE)
+
+        // Outline everything that can be dragged; the one in hand is brighter.
+        stroke.strokeWidth = u * 0.006f
+        for (b in g.buttons) {
+            stroke.color = outlineColor(b.id)
+            canvas.drawCircle(b.cx, b.cy, b.r * 1.2f, stroke)
+        }
+        stroke.color = outlineColor(ConsoleGeometry.ID_STICK)
+        canvas.drawCircle(g.stickCx, g.stickCy, g.stickR * 1.05f, stroke)
+        drawPillOutline(canvas, g.coin, ConsoleGeometry.ID_COIN)
+        drawPillOutline(canvas, g.start, ConsoleGeometry.ID_START)
+        drawPillOutline(canvas, g.menu, ConsoleGeometry.ID_MENU)
+    }
+
+    private fun outlineColor(id: Int): Int = if (id == dragId) 0xFFFFFFFF.toInt() else 0xCCFFC107.toInt()
+
+    private fun drawPillOutline(canvas: Canvas, rect: RectF, id: Int) {
+        stroke.color = outlineColor(id)
+        val outline = inflated(rect, 0.18f)
+        val radius = outline.height() / 2f
+        canvas.drawRoundRect(outline, radius, radius, stroke)
+    }
+
+    private companion object {
+        const val EDIT_NOTHING = 0
+        const val EDIT_RESET = 1
+        const val EDIT_DONE = 2
     }
 }

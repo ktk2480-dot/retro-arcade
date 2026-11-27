@@ -17,6 +17,7 @@ class ConsoleLayout(
     context: Context,
     private val gameView: View,
     private val verticalGame: Boolean,
+    private val store: PadStore,
 ) : ViewGroup(context) {
 
     val gamepad = GamepadView(context)
@@ -24,7 +25,8 @@ class ConsoleLayout(
     /** Called when the arrangement flips between upright and sideways. */
     var onArrangementChanged: ((landscape: Boolean) -> Unit)? = null
 
-    var sixButtons: Boolean = true
+    /** 3, 4 or 6 action buttons. */
+    var buttonCount: Int = 6
         set(value) {
             if (field != value) {
                 field = value
@@ -44,6 +46,7 @@ class ConsoleLayout(
 
     init {
         setWillNotDraw(false)
+        gamepad.store = store
         addView(gameView)
         addView(gamepad)
     }
@@ -82,7 +85,7 @@ class ConsoleLayout(
 
         var g = geometry
         if (g == null || g.width != w || g.height != h) {
-            g = ConsoleGeometry.compute(w, h, insetL, insetT, insetR, insetB, verticalGame, sixButtons)
+            g = ConsoleGeometry.compute(w, h, insetL, insetT, insetR, insetB, verticalGame, buttonCount)
             geometry = g
         }
         gameView.measure(
@@ -99,7 +102,7 @@ class ConsoleLayout(
         val g = geometry ?: return
         gameView.layout(g.game.left, g.game.top, g.game.right, g.game.bottom)
         gamepad.layout(0, 0, right - left, bottom - top)
-        gamepad.setGeometry(g)
+        gamepad.setGeometry(g, store.profileKey(g.landscape, g.buttonCount))
         if (lastLandscape != g.landscape) {
             lastLandscape = g.landscape
             onArrangementChanged?.invoke(g.landscape)
