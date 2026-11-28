@@ -23,6 +23,9 @@ class DbGame(
     val isVertical: Boolean get() = (flags and 1) != 0
     val isBios: Boolean get() = (flags and 2) != 0
     val isPreliminary: Boolean get() = (flags and 4) != 0
+
+    /** The game also needs a CHD disk image, kept in a folder named after the set. */
+    val needsDisk: Boolean get() = (flags and 8) != 0
 }
 
 class GameDb private constructor(private val cores: Map<Core, Map<String, DbGame>>) {

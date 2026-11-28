@@ -14,8 +14,10 @@ class CoreMatch(
     val score: Float,
     val biosMissing: Boolean,
     val parentMissing: Boolean,
+    /** The game needs a CHD disk image and no folder for it was found. */
+    val diskMissing: Boolean,
 ) {
-    val playable: Boolean get() = missing == 0 && !biosMissing
+    val playable: Boolean get() = missing == 0 && !biosMissing && !diskMissing
     val percent: Int get() = (score * 100f).toInt()
 }
 
@@ -95,7 +97,7 @@ object RomScanner {
                 // Only FBNeo reads 7z, and the contents cannot be checked from here.
                 val game = db.find(Core.FBNEO, name)
                 val matches = if (game != null && !game.isBios) {
-                    listOf(CoreMatch(Core.FBNEO, game, 0, 1f, false, false))
+                    listOf(CoreMatch(Core.FBNEO, game, 0, 1f, false, false, false))
                 } else {
                     emptyList()
                 }
@@ -124,7 +126,10 @@ object RomScanner {
                 val score = if (totalBytes > 0L) foundBytes.toFloat() / totalBytes.toFloat() else 1f
                 val biosMissing = game.bios.isNotEmpty() && !byName.containsKey(game.bios)
                 val parentMissing = missing > 0 && game.parent.isNotEmpty() && !byName.containsKey(game.parent)
-                matches.add(CoreMatch(core, game, missing, score, biosMissing, parentMissing))
+                // CHD images live in a folder named after the set (or its parent), next to the zips.
+                val diskMissing = game.needsDisk && !File(dir, name).isDirectory &&
+                    !(game.parent.isNotEmpty() && File(dir, game.parent).isDirectory)
+                matches.add(CoreMatch(core, game, missing, score, biosMissing, parentMissing, diskMissing))
             }
             matches.sortWith(
                 compareBy<CoreMatch> { if (it.playable) 0 else 1 }

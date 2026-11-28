@@ -4,8 +4,9 @@ import android.content.Context
 import java.io.File
 
 /**
- * The two bundled arcade cores. Each one only runs ROM sets built for its own
- * version, which is why the game list checks every zip against both.
+ * The bundled arcade cores, lightest first. Each one only runs ROM sets built for
+ * its own version, which is why the game list checks every zip against all of them.
+ * When a zip fits more than one, the earlier (lighter) core is used.
  */
 enum class Core(
     val id: String,
@@ -13,7 +14,10 @@ enum class Core(
     private val library: String,
 ) {
     FBNEO("fbneo", "FBNeo", "libfbneo_libretro_android.so"),
-    MAME2003PLUS("mame2003_plus", "MAME 2003-Plus", "libmame2003_plus_libretro_android.so");
+    MAME2003PLUS("mame2003_plus", "MAME 2003-Plus", "libmame2003_plus_libretro_android.so"),
+
+    /** Current MAME, arcade drivers only. Runs today's ROM sets, but is much heavier. */
+    MAME_CURRENT("mame_current", "MAME (최신)", "libmamearcade_libretro_android.so");
 
     private fun libraryFile(context: Context) =
         File(context.applicationInfo.nativeLibraryDir, library)

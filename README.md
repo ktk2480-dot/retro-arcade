@@ -4,7 +4,7 @@
 
 - **세로**: 위에 게임 화면, 아래 왼쪽에 조이스틱, 아래 오른쪽에 버튼, 그 위에 COIN / START
 - **가로**: 폰을 돌리면 게임을 다시 시작하지 않고 가운데 게임 화면, 왼쪽 조이스틱, 오른쪽 버튼으로 바뀝니다
-- 에뮬레이터 코어 2종 내장: **FBNeo**, **MAME 2003-Plus**
+- 에뮬레이터 코어 3종 내장: **FBNeo**, **MAME 2003-Plus**, **MAME (최신)**
 - 상태 저장/불러오기(슬롯 3개), CRT 스캔라인 필터, 4버튼/6버튼 전환, 회전 고정
 
 요구 사항: Android 8.0 이상, 64비트(arm64) 기기.
@@ -32,7 +32,15 @@
 | 노랑 | 시도 가능 (BIOS zip 없음, 에뮬레이션 미완성 게임, 7z 등) |
 | 빨강 | 롬셋 불일치 또는 부모 ROM 없음 |
 
-아케이드 ROM은 **코어 버전에 맞는 세트**여야 실행됩니다. FBNeo는 최신 FBNeo 세트, MAME 2003-Plus는 MAME 0.78 계열 세트를 씁니다. 게임을 길게 누르면 코어를 직접 고를 수 있습니다.
+아케이드 ROM은 **코어 버전에 맞는 세트**여야 실행됩니다. 게임을 길게 누르면 코어를 직접 고를 수 있습니다.
+
+| 코어 | 맞는 ROM 세트 | 특징 |
+|---|---|---|
+| FBNeo | 최신 FBNeo 세트 (최신 MAME 세트와 대부분 같음) | 가볍고 빠름, 상태 저장 안정적 |
+| MAME 2003-Plus | MAME 0.78 계열 세트 | 가벼움, 구형 세트용 |
+| MAME (최신) | 최신 MAME 세트 | FBNeo에 없는 게임까지 지원하지만 무거워서 기기와 게임에 따라 느릴 수 있음 |
+
+한 zip이 여러 코어에 맞으면 위 순서(가벼운 코어 먼저)로 고릅니다. MAME (최신)에서 CHD가 필요한 게임은 zip 옆에 세트 이름의 폴더를 만들고 그 안에 CHD 파일을 둡니다. 일부 게임은 장치용 ROM zip(예: `qsound_hle.zip`)도 같은 폴더에 있어야 하며, 이 부분은 목록에서 미리 확인하지 못합니다.
 
 ## 조작
 
@@ -65,9 +73,9 @@ MENU에 세 가지가 있습니다.
 
 `main` 브랜치에 푸시하면 GitHub Actions(`.github/workflows/build.yml`)가 APK를 빌드해 Releases에 올립니다.
 
-- 에뮬레이터 코어는 저장소에 넣지 않고, 빌드할 때 libretro 공식 빌드봇에서 arm64용을 내려받아 APK에 넣습니다.
+- 에뮬레이터 코어는 저장소에 넣지 않고, 빌드할 때 libretro 공식 빌드봇에서 arm64용을 내려받아 APK에 넣습니다. MAME (최신)는 그날의 최신 빌드라서, 빌드 시점에 따라 요구하는 ROM 세트 버전이 조금씩 올라갑니다.
 - 서명 키는 저장소 Secrets(`KEYSTORE_B64`, `KEYSTORE_PASSWORD`)에 있습니다. 같은 키로 서명해야 기존 설치 위에 업데이트됩니다. Secrets가 없으면 임시 디버그 키로 서명되어 덮어쓰기 설치가 되지 않습니다.
-- `app/src/main/assets/gamedb.bin`은 `tools/build_gamedb.py`로 두 코어의 게임 목록에서 만든 것입니다.
+- `app/src/main/assets/gamedb.bin`은 `tools/build_gamedb.py`로 세 코어의 게임 목록에서 만든 것입니다. MAME (최신)의 목록은 코어 소스(`src/mame`의 드라이버 파일)에서 직접 읽습니다.
 
 PC에서 직접 빌드하려면 두 코어의 `.so`를 `app/src/main/jniLibs/arm64-v8a/`에 `lib<코어>_libretro_android.so` 이름으로 넣고 Android Studio에서 엽니다.
 
@@ -75,5 +83,6 @@ PC에서 직접 빌드하려면 두 코어의 `.so`를 `app/src/main/jniLibs/arm
 
 - 이 저장소의 소스: GPL-3.0 (`LICENSE`). 에뮬레이터 프런트엔드 라이브러리 [LibretroDroid](https://github.com/Swordfish90/LibretroDroid)(GPL-3.0)를 사용합니다.
 - [FBNeo](https://github.com/libretro/FBNeo)와 [MAME 2003-Plus](https://github.com/libretro/mame2003-plus-libretro) 코어는 각자의 **비상업** 라이선스를 따릅니다. 이 APK를 판매하거나 유료 서비스에 포함할 수 없습니다.
+- [MAME (최신)](https://github.com/libretro/mame) 코어는 GPL-2.0-or-later입니다.
 - APK를 다른 사람에게 줄 때는 이 소스도 함께 받을 수 있게 해야 합니다(GPL).
 - 게임 ROM과 BIOS의 저작권은 각 권리자에게 있습니다.

@@ -228,8 +228,10 @@ class MainActivity : AppCompatActivity() {
                     "2. '폴더'에서 그 폴더를 고르면 목록에 나타납니다.\n" +
                     "3. 게임을 누르면 맞는 코어로 실행합니다. 길게 누르면 코어를 직접 고를 수 있습니다.\n\n" +
                     "● 초록: 실행 가능  ● 노랑: 시도 가능  ● 빨강: 롬셋 불일치\n\n" +
-                    "· ROM은 코어 버전과 세트가 맞아야 합니다. FBNeo는 최신 세트, " +
-                    "MAME 2003-Plus는 0.78 계열 세트를 사용합니다.\n" +
+                    "· ROM은 코어 버전과 세트가 맞아야 합니다. FBNeo와 MAME(최신)는 최신 세트, " +
+                    "MAME 2003-Plus는 0.78 계열 세트를 사용합니다. 여러 코어에 맞으면 가벼운 " +
+                    "코어(FBNeo → MAME 2003-Plus → MAME 최신) 순으로 고릅니다.\n" +
+                    "· MAME(최신)는 무거워서 기기와 게임에 따라 느릴 수 있습니다.\n" +
                     "· 네오지오 등은 BIOS zip(neogeo.zip)이 같은 폴더에 있어야 합니다.\n" +
                     "· 게임 중 MENU(또는 뒤로가기): 상태 저장/불러오기, CRT 필터, 회전 고정.\n" +
                     "· 버튼: '버튼 배열'로 3·4·6버튼을 고르고, '버튼 지정'으로 화면 버튼이 누를 " +
@@ -361,7 +363,10 @@ class MainActivity : AppCompatActivity() {
             !item.verifiable -> Pair("$file · $core · 7z는 내용 확인 생략", COLOR_WARN)
             best.playable && best.game.isPreliminary -> Pair("$file · $core · 에뮬레이션 미완성 게임", COLOR_WARN)
             best.playable -> Pair("$file · $core", COLOR_OK)
-            best.missing == 0 -> Pair("$file · $core · BIOS 필요: ${best.game.bios}.zip", COLOR_WARN)
+            best.missing == 0 && best.biosMissing ->
+                Pair("$file · $core · BIOS 필요: ${best.game.bios}.zip", COLOR_WARN)
+            best.missing == 0 ->
+                Pair("$file · $core · CHD 디스크 이미지 필요 (${item.name} 폴더)", COLOR_WARN)
             best.parentMissing -> Pair("$file · 부모 ROM 필요: ${best.game.parent}.zip", COLOR_BAD)
             else -> Pair("$file · 롬셋 불일치 ($core 기준 ${best.percent}% 일치, ${best.missing}개 누락)", COLOR_BAD)
         }
@@ -373,7 +378,8 @@ class MainActivity : AppCompatActivity() {
         return when {
             !item.verifiable -> "내용 확인 생략"
             match.playable -> "실행 가능"
-            match.missing == 0 -> "BIOS 필요 (${match.game.bios}.zip)"
+            match.missing == 0 && match.biosMissing -> "BIOS 필요 (${match.game.bios}.zip)"
+            match.missing == 0 -> "CHD 디스크 이미지 필요"
             else -> "${match.percent}% 일치, ${match.missing}개 누락"
         }
     }

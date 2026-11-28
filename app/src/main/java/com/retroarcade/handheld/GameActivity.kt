@@ -91,9 +91,13 @@ class GameActivity : AppCompatActivity() {
         private val DEFAULT_SLOTS_3 = intArrayOf(0, 1, 2)
         private val DEFAULT_SLOTS_4 = intArrayOf(0, 1, 2, 3)
 
-        // Six buttons keep the fighting-game panel both cores expect:
+        // Six buttons keep the fighting-game panel FBNeo and MAME 2003-Plus expect:
         // bottom row A B C = B, A, R and top row X Y Z = Y, X, L.
         private val DEFAULT_SLOTS_6 = intArrayOf(0, 1, 5, 2, 3, 4)
+
+        // Current MAME numbers a six-button panel plainly: top row X Y Z = buttons 1 2 3
+        // (punches), bottom row A B C = buttons 4 5 6 (kicks).
+        private val DEFAULT_SLOTS_6_MAME_CURRENT = intArrayOf(3, 4, 5, 0, 1, 2)
     }
 
     private lateinit var retroView: GLRetroView
@@ -156,6 +160,13 @@ class GameActivity : AppCompatActivity() {
             File(systemDir, "mame2003-plus").mkdirs()
             for (sub in arrayOf("cfg", "nvram", "hi", "memcard", "diff", "ctrlr", "inp", "snap")) {
                 File(savesDir, "mame2003-plus/$sub").mkdirs()
+            }
+        } else if (core == Core.MAME_CURRENT) {
+            for (sub in arrayOf("artwork", "cheat", "hash", "ini", "plugins", "samples", "crosshair", "bios", "roms")) {
+                File(systemDir, "mame/$sub").mkdirs()
+            }
+            for (sub in arrayOf("cfg", "diff", "nvram", "input", "states", "snaps")) {
+                File(savesDir, "mame/$sub").mkdirs()
             }
         } else {
             File(systemDir, "fbneo").mkdirs()
@@ -269,6 +280,12 @@ class GameActivity : AppCompatActivity() {
         Core.FBNEO -> arrayOf(
             Variable("fbneo-diagnostic-input", "None"),
         )
+        // Start the arcade driver named by the zip, whatever the ROM folder is called
+        // (with software lists on, a folder named like a system would be taken for one).
+        Core.MAME_CURRENT -> arrayOf(
+            Variable("mame_softlists_enable", "disabled"),
+            Variable("mame_mouse_enable", "disabled"),
+        )
     }
 
     private fun gameKey(): String = core.id + "_" + romFile.nameWithoutExtension
@@ -276,7 +293,7 @@ class GameActivity : AppCompatActivity() {
     private fun defaultSlots(): IntArray = when (console.buttonCount) {
         3 -> DEFAULT_SLOTS_3
         4 -> DEFAULT_SLOTS_4
-        else -> DEFAULT_SLOTS_6
+        else -> if (core == Core.MAME_CURRENT) DEFAULT_SLOTS_6_MAME_CURRENT else DEFAULT_SLOTS_6
     }
 
     /** Index of the game button an on-screen slot presses: the player's choice, else the default. */
