@@ -333,12 +333,54 @@ class GameActivity : AppCompatActivity() {
         if (loaded && code == GLRetroView.ERROR_GENERIC) return
         failureShown = true
         RunMarker.clear(this)
+        // The core says in its own words what went wrong (for example which file it
+        // could not find); fetch that before telling the player.
+        io.execute {
+            val detail = readCoreMessages()
+            runOnUiThread { showFailure(code, detail) }
+        }
+    }
 
-        val message = when (code) {
-            GLRetroView.ERROR_LOAD_GAME ->
-                "게임을 불러오지 못했습니다.\n\n" +
+    /**
+     * The core's most recent log lines, errors and warnings first. Cores write through
+     * the library's log callback into this process's own system log, which an app may read.
+     */
+    private fun readCoreMessages(): String {
+        return try {
+            val process = ProcessBuilder(
+                "logcat", "-d", "-v", "brief", "-t", "1000", "--pid=" + android.os.Process.myPid(),
+            ).redirectErrorStream(true).start()
+            val lines = process.inputStream.bufferedReader().use { it.readLines() }
+            process.waitFor()
+
+            val fromCore = lines.filter { it.contains("/Libretro Core(") }
+            val important = fromCore.filter { it.startsWith("E/") || it.startsWith("W/") }
+            val chosen = if (important.isNotEmpty()) important else fromCore
+            val texts = ArrayList<String>()
+            for (line in chosen) {
+                var text = line.substringAfter("): ", line).trim()
+                if (text.isEmpty()) continue
+                if (text.length > 160) text = text.substring(0, 160) + "…"
+                if (texts.isEmpty() || texts[texts.size - 1] != text) texts.add(text)
+            }
+            texts.takeLast(14).joinToString("\n")
+        } catch (_: Throwable) {
+            ""
+        }
+    }
+
+    private fun showFailure(code: Int, detail: String) {
+        if (closing || isFinishing) return
+        var message = when (code) {
+            GLRetroView.ERROR_LOAD_GAME -> {
+                var text = "게임을 불러오지 못했습니다.\n\n" +
                     "· ROM 세트가 ${core.label} 버전과 맞지 않거나\n" +
                     "· 부모 ROM / BIOS zip(예: neogeo.zip)이 같은 폴더에 없을 때 생깁니다."
+                if (core == Core.MAME_CURRENT) {
+                    text += "\n· MAME (최신)는 장치용 ROM zip이나 CHD가 없어도 실행되지 않습니다."
+                }
+                text
+            }
             GLRetroView.ERROR_LOAD_LIBRARY ->
                 "에뮬레이터 코어(${core.label})를 불러오지 못했습니다."
             GLRetroView.ERROR_GL_NOT_COMPATIBLE ->
@@ -346,8 +388,14 @@ class GameActivity : AppCompatActivity() {
             else ->
                 "에뮬레이터 오류가 발생했습니다. (코드 $code)"
         }
+        message += if (detail.isNotEmpty()) {
+            "\n\n[코어가 남긴 메시지]\n$detail"
+        } else {
+            "\n\n(코어가 남긴 메시지를 읽지 못했습니다.)"
+        }
+
         val builder = AlertDialog.Builder(this)
-            .setTitle(gameTitle)
+            .setTitle("$gameTitle · ${core.label}")
             .setMessage(message)
             .setCancelable(false)
             .setPositiveButton("닫기") { _, _ -> closeGame(RESULT_LOAD_FAILED, null) }
@@ -362,7 +410,7 @@ class GameActivity : AppCompatActivity() {
                 closeGame(RESULT_RETRY, retry)
             }
         }
-        if (!isFinishing) builder.show()
+        builder.show()
     }
 
     // ---- menu -------------------------------------------------------------------------------
